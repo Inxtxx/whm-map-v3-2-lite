@@ -3,18 +3,15 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>WHM 462 集签地图 · V3.2-Lite Fix-A</title>
+<title>WHM 462 集签地图 · V3.2-Lite · Self-host</title>
 
-<!-- 优先使用 UNPKG（更稳），带 SRI；若你要换 jsDelivr，把链接替换为 cdn.jsdelivr 即可 -->
 <link rel="preconnect" href="https://unpkg.com" crossorigin>
 <link rel="stylesheet"
   href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-  integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
-  crossorigin="anonymous">
+  integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="anonymous">
 <script
   src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
-  integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
-  crossorigin="anonymous"></script>
+  integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin="anonymous"></script>
 
 <style>
   html,body,#map{height:100%;margin:0;background:#0b1d3d;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,"PingFang SC","Microsoft YaHei",sans-serif}
@@ -30,12 +27,21 @@
   .note{font-size:12px;color:#444;margin-top:6px}
   .badge{position:absolute;left:12px;top:12px;background:#fff;color:#222;padding:8px 10px;border-radius:8px;box-shadow:0 1px 6px rgba(0,0,0,.18);font-size:12px;z-index:902}
   .btn{display:inline-block;background:#0b5fff;color:#fff;border-radius:6px;padding:6px 10px;font-weight:600;text-decoration:none}
+  .overlay{
+    position:absolute;inset:12px;max-width:720px;background:#fff;border-radius:10px;
+    box-shadow:0 6px 24px rgba(0,0,0,.22);padding:16px 18px;z-index:950;display:none
+  }
+  .overlay h2{margin:0 0 8px;font-size:18px}
+  .overlay ol{margin:6px 0 0 18px;padding:0}
+  .overlay code{background:#f6f8fa;border:1px solid #e3e6eb;border-radius:6px;padding:2px 6px}
 </style>
 </head>
 <body>
 <div id="map"></div>
-<div class="badge" id="badge">状态：初始化（Lite·Fix-A）</div>
 
+<div class="badge" id="badge">状态：初始化（本地数据模式）</div>
+
+<!-- 图例 -->
 <div class="legend">
   <div style="font-weight:700;margin-bottom:6px;color:#000">可集签岗位（近10天）· 五级蓝色</div>
   <div class="row"><span class="sw" style="background:#eaf2ff"></span>0</div>
@@ -47,6 +53,7 @@
   <div class="row"><span class="sw" style="background:#e4e6eb;border:1px dashed #ff4d4f"></span><span style="color:#c0392b">不可集签（462）</span></div>
 </div>
 
+<!-- 岗位侧栏 -->
 <div class="panel" id="jobsPanel">
   <h3 id="jobsTitle"></h3>
   <div id="jobsSub" style="margin-bottom:6px;"></div>
@@ -54,38 +61,51 @@
   <div class="note">岗位来源：Workforce Australia（官方）。仅统计近10天，并按 462 行业口径筛选。</div>
 </div>
 
+<!-- 引导面板（当 poa.json 不存在时显示） -->
+<div class="overlay" id="help">
+  <h2>请先把邮编边界文件放到本仓库</h2>
+  <p>为避免被外部网络拦截，我们改成只从<b>当前仓库</b>读取数据文件。请按照下面两步操作：</p>
+  <ol>
+    <li>下载邮编边界（15% 简化版）：打开
+      <a href="https://raw.githubusercontent.com/Offbeatmammal/AU_Postcode_Map/main/POA_2021_AUST_GDA2020_15percent.json" target="_blank" rel="noopener">这个链接</a>
+      → 右键另存为到电脑，文件名建议 <code>poa.json</code>（若打不开，稍后再试或换网络）。</li>
+    <li>回到 GitHub，本仓库顶部点 <b>Add file → Upload files</b>，把文件上传到
+      <code>/data/poa.json</code>（或者直接放在根目录叫 <code>poa.json</code> 也可以）。</li>
+  </ol>
+  <p>上传完成后，刷新页面即可加载地图。此提示只在找不到数据文件时出现。</p>
+</div>
+
 <script>
-// ========== 可编辑配置 ==========
-var GEOJSON_SOURCES = [
-  // 优先从“自己域名”的 Pages 读取（同域，最稳）
-  window.location.origin + '/AU_Postcode_Map/POA_2021_AUST_GDA2020_15percent.json',
-  // 下面是后备源（保留着以防万一）
-  'https://raw.githubusercontent.com/Offbeatmammal/AU_Postcode_Map/main/POA_2021_AUST_GDA2020_15percent.json',
-  'https://cdn.jsdelivr.net/gh/Offbeatmammal/AU_Postcode_Map@main/POA_2021_AUST_GDA2020_15percent.json',
-  'https://cdn.jsdelivr.net/gh/ferocia/australia-geojsons@master/outputs/au-postcodes-Visvalingam-5.geojson'
-];
+// ===== 基本配置（只从本仓库读） =====
+const LOCAL_SOURCES = [ 'data/poa.json', 'poa.json' ]; // 先找 data/poa.json，再找根目录 poa.json
+const AUS_BOUNDS = L.latLngBounds(L.latLng(-44.5,110.0), L.latLng(-9.0,155.0));
+const blue5 = n => n<=0 ? '#eaf2ff' : n<=5 ? '#cfe1ff' : n<=20 ? '#9fc2ff' : n<=50 ? '#5b94ff' : '#1e6bff';
+const STYLE_INELIG = { fillColor:'#e4e6eb', color:'#ff4d4f', weight:1.2, dashArray:'6,4', fillOpacity:.35, opacity:.95 };
+let JOBS = { perPOA:{} }; // 可选：data/jobs-last10d.json
 
-var AUS_BOUNDS = L.latLngBounds(L.latLng(-44.5,110.0), L.latLng(-9.0,155.0));
-// 五级蓝
-function blue5(n){ return n<=0?'#eaf2ff': n<=5?'#cfe1ff': n<=20?'#9fc2ff': n<=50?'#5b94ff':'#1e6bff'; }
-var STYLE_INELIG = { fillColor:'#e4e6eb', color:'#ff4d4f', weight:1.2, dashArray:'6,4', fillOpacity:.35, opacity:.95 };
-var JOBS = { perPOA:{} }; // 可选数据文件 data/jobs-last10d.json（没有也没关系）
-
-// ========== 462 规则（中文行业）=========
-var RULES = {
+// ===== 462 规则（中文行业） =====
+const RULES = {
   tourismExtraPostcodes: ["4406","4416","4498","7215"],
   northern: {
     ntAll: true,
-    postcodes: ["0872","6537","6642","6646","6701","6705","6707","6710","6711","6712","6713","6714","6716","6718",
+    postcodes: [
+      "0872","6537","6642","6646","6701","6705","6707","6710","6711","6712","6713","6714","6716","6718",
       "6720","6721","6722","6725","6726","6728","6740","6743","6751","6753","6754","6758","6760","6762","6765","6770",
-      "4472","4478","4481","4482","4680","4694","4695","4697","4699","4700","4701","4702","4703","4704","4705","4706",
-      "4707","4709","4710","4711","4712","4713","4714","4717","4720","4721","4722","4723","4724","4725","4726","4727",
-      "4728","4730","4731","4732","4733","4735","4736","4737","4738","4739","4740","4741","4742","4743","4744","4745",
-      "4746","4750","4751","4753","4754","4756","4757","4798","4799","4800","4801","4802","4803","4804","4805","4806",
-      "4807","4808","4809","4810","4811","4812","4814","4815","4816","4817","4818","4819","4820","4821","4822","4823",
-      "4824","4825","4828","4829","4830","4849","4850","4852","4854","4855","4856","4858","4859","4860","4861","4865",
-      "4868","4869","4870","4871","4872","4873","4874","4875","4876","4877","4878","4879","4880","4881","4882","4883",
-      "4884","4885","4886","4887","4888","4890","4891","4892","4895"]
+      "4472","4478","4481","4482","4680","4694","4695","4697","4699",
+      "4700","4701","4702","4703","4704","4705","4706","4707","4709","4710","4711","4712","4713","4714","4717",
+      "4720","4721","4722","4723","4724","4725","4726","4727","4728",
+      "4730","4731","4732","4733","4735","4736","4737","4738","4739",
+      "4740","4741","4742","4743","4744","4745","4746",
+      "4750","4751","4753","4754","4756","4757",
+      "4798","4799","4800","4801","4802","4803","4804","4805","4806","4807","4808","4809",
+      "4810","4811","4812","4814","4815","4816","4817","4818","4819",
+      "4820","4821","4822","4823","4824","4825","4828","4829","4830",
+      "4849","4850","4852","4854","4855","4856","4858","4859",
+      "4860","4861","4865","4868","4869",
+      "4870","4871","4872","4873","4874","4875","4876","4877","4878","4879",
+      "4880","4881","4882","4883","4884","4885","4886","4887","4888",
+      "4890","4891","4892","4895"
+    ]
   },
   regionalByState:{
     NSW:["2311-2312","2328-2411","2420-2490","2536-2551","2575-2594","2618-2739","2787-2898"],
@@ -103,153 +123,146 @@ var RULES = {
   }
 };
 
-// ========== 小工具 ==========
-function badge(txt){ var el=document.getElementById('badge'); if(el) el.innerHTML=txt; }
-function blueStyle(n){ return { fillColor: blue5(n), color:'#183a7a', weight:.6, fillOpacity:.72, opacity:.95 }; }
+// ===== 工具 =====
+const badge = txt => { const el=document.getElementById('badge'); if(el) el.innerHTML=txt; };
+const blueStyle = n => ({ fillColor: blue5(n), color:'#183a7a', weight:.6, fillOpacity:.72, opacity:.95 });
+
 function inRanges(ranges, pc){
   pc=String(pc||'').padStart(4,'0');
-  for(var i=0;i<(ranges||[]).length;i++){
-    var s=String(ranges[i]).trim();
+  for(const s0 of (ranges||[])){
+    const s=String(s0).trim();
     if(s==='ALL') return true;
-    if(s.indexOf('-')>-1){ var ab=s.split('-'); var a=parseInt(ab[0],10), b=parseInt(ab[1],10), n=parseInt(pc,10); if(n>=a&&n<=b) return true; }
+    if(s.includes('-')){ const [a,b]=s.split('-').map(x=>parseInt(x,10)); const n=parseInt(pc,10); if(n>=a&&n<=b) return true; }
     else if(pc===s.padStart(4,'0')) return true;
   }
   return false;
 }
-function stateByPc(pc){ pc=String(pc||'').padStart(4,'0'); var p=pc[0]; if(p==='2')return'NSW'; if(p==='3')return'VIC'; if(p==='4')return'QLD'; if(p==='5')return'SA'; if(p==='6')return'WA'; if(p==='7')return'TAS'; if(p==='0'||p==='8'||p==='9')return'NT'; return'Other'; }
-function inRegional(pc){ var st=stateByPc(pc); var segs=RULES.regionalByState[st]||[]; if(segs.indexOf('ALL')>-1) return true; return inRanges(segs, pc); }
-function inRemoteVR(pc){ var st=stateByPc(pc); var segs=RULES.remoteVRByState[st]||[]; if(segs.indexOf('ALL')>-1) return true; if(inRanges(segs, pc)) return true; return (RULES.tourismExtraPostcodes||[]).indexOf(String(pc||'').padStart(4,'0'))>-1; }
-function inNorthern(pc){ var s=stateByPc(pc); if(s==='NT' && RULES.northern.ntAll) return true; return (RULES.northern.postcodes||[]).indexOf(String(pc||'').padStart(4,'0'))>-1; }
+function stateByPc(pc){ pc=String(pc||'').padStart(4,'0'); const p=pc[0]; if(p==='2')return'NSW'; if(p==='3')return'VIC'; if(p==='4')return'QLD'; if(p==='5')return'SA'; if(p==='6')return'WA'; if(p==='7')return'TAS'; if(p==='0'||p==='8'||p==='9')return'NT'; return'Other'; }
+function inRegional(pc){ const st=stateByPc(pc); const segs=RULES.regionalByState[st]||[]; if(segs.includes('ALL')) return true; return inRanges(segs, pc); }
+function inRemoteVR(pc){ const st=stateByPc(pc); const segs=RULES.remoteVRByState[st]||[]; if(segs.includes('ALL')) return true; if(inRanges(segs, pc)) return true; return (RULES.tourismExtraPostcodes||[]).includes(String(pc||'').padStart(4,'0')); }
+function inNorthern(pc){ const s=stateByPc(pc); if(s==='NT' && RULES.northern.ntAll) return true; return (RULES.northern.postcodes||[]).includes(String(pc||'').padStart(4,'0')); }
 function industriesZH(pc){
-  var t=[]; if(inNorthern(pc)||inRemoteVR(pc)) t.push('旅游与酒店业');
+  const t=[]; if(inNorthern(pc)||inRemoteVR(pc)) t.push('旅游与酒店业');
   if(inNorthern(pc)||inRegional(pc)){ t.push('植物与动物栽培'); t.push('建筑业'); }
   if(inNorthern(pc)) t.push('渔业与珍珠养殖 / 林业种植与采伐');
   return t;
 }
-function getCount(pc){ return (JOBS && JOBS.perPOA && JOBS.perPOA[pc] && JOBS.perPOA[pc].count) ? JOBS.perPOA[pc].count : 0; }
-function getItems(pc){ return (JOBS && JOBS.perPOA && JOBS.perPOA[pc] && JOBS.perPOA[pc].items) ? JOBS.perPOA[pc].items : []; }
+const getCount = pc => (JOBS?.perPOA?.[pc]?.count)||0;
+const getItems = pc => (JOBS?.perPOA?.[pc]?.items)||[];
+
 function getPOAfromAnyProps(props){
-  if(!props) return null;
-  var keys=['poa_code_2021','POA_CODE21','postcode','POA_CODE','code','id','name','poa_code','POA_CODE_2021'];
-  for(var i=0;i<keys.length;i++){
-    var v=props[keys[i]]; if(!v && v!==0) continue;
-    var m=String(v).match(/\b(\d{4})\b/); if(m) return m[1];
-  }
-  var vals=Object.values(props||{}); for(var j=0;j<vals.length;j++){ var m2=String(vals[j]).match(/\b(\d{4})\b/); if(m2) return m2[1]; }
+  const keys=['poa_code_2021','POA_CODE21','postcode','POA_CODE','code','id','name','poa_code','POA_CODE_2021'];
+  for(const k of keys){ const v=props[k]; if(v||v===0){ const m=String(v).match(/\b(\d{4})\b/); if(m) return m[1]; } }
+  for(const v of Object.values(props||{})){ const m=String(v).match(/\b(\d{4})\b/); if(m) return m[1]; }
   return null;
 }
-function getPOAName(props){ return (props.poa_name_2021 || props.POA_NAME21 || props.name || props.poa_name || ('邮编 '+getPOAfromAnyProps(props))); }
+const getPOAName = props => props.poa_name_2021 || props.POA_NAME21 || props.name || ('邮编 '+getPOAfromAnyProps(props));
 
-// 强制最小缩放（澳大利亚至少占视窗 60%）与限制拖动
 function applyViewConstraints(map){
-  function resize(){
-    var size=map.getSize();
-    var padX=Math.round(size.x*0.20), padY=Math.round(size.y*0.20);
-    var minZ=map.getBoundsZoom(AUS_BOUNDS,true,{paddingTopLeft:[padX,padY],paddingBottomRight:[padX,padY]});
+  const resize=()=>{
+    const size=map.getSize();
+    const padX=Math.round(size.x*0.20), padY=Math.round(size.y*0.20);
+    const minZ=map.getBoundsZoom(AUS_BOUNDS,true,{paddingTopLeft:[padX,padY],paddingBottomRight:[padX,padY]});
     map.setMinZoom(minZ); if(map.getZoom()<minZ) map.setZoom(minZ);
-  }
-  map.setMaxBounds(AUS_BOUNDS.pad(0.18)); map.options.maxBoundsViscosity=0.9;
-  map.fitBounds(AUS_BOUNDS,{padding:[50,50]}); resize(); map.on('resize', resize);
+  };
+  map.setMaxBounds(AUS_BOUNDS.pad(0.18));
+  map.options.maxBoundsViscosity=0.9;
+  map.fitBounds(AUS_BOUNDS,{padding:[50,50]});
+  resize();
+  map.on('resize', resize);
 }
 
-// 带超时的 JSON 拉取
-function fetchJsonWithTimeout(url, ms){
-  return new Promise(function(resolve,reject){
-    var timedOut=false; var to=setTimeout(function(){ timedOut=true; reject(new Error('timeout')); }, ms||12000);
-    fetch(url,{mode:'cors',cache:'force-cache'}).then(function(r){
-      if(!r.ok){ clearTimeout(to); return reject(new Error('http '+r.status)); }
-      return r.json();
-    }).then(function(j){ if(!timedOut){ clearTimeout(to); resolve(j); } })
-      .catch(function(e){ if(!timedOut){ clearTimeout(to); reject(e); } });
-  });
-}
-
-function loadJobs(){
-  fetch('data/jobs-last10d.json',{cache:'no-store'}).then(function(r){
-    if(r.ok) return r.json();
-  }).then(function(j){ if(j) JOBS=j; }).catch(function(){});
+async function loadJobs(){
+  try{ const r=await fetch('data/jobs-last10d.json',{cache:'no-store'}); if(r.ok) JOBS=await r.json(); }catch{}
 }
 
 function bindPolygonUI(layer, props){
-  var pc=getPOAfromAnyProps(props); if(!pc) return;
-  var name=getPOAName(props);
-  var inds=industriesZH(pc);
-  var n=getCount(pc);
+  const pc=getPOAfromAnyProps(props); if(!pc) return;
+  const name=getPOAName(props);
+  const inds=industriesZH(pc);
+  if(!inds.length) layer.setStyle(STYLE_INELIG);
+  else layer.setStyle(blueStyle(getCount(pc)));
 
-  if(!inds.length) layer.setStyle(STYLE_INELIG); else layer.setStyle(blueStyle(n));
-
-  layer.on('mouseover', function(e){
-    var html='<div style="font-weight:700;margin-bottom:4px;">'+name+'（邮编 '+pc+'）</div>'
-            +(inds.length? ('<div>可集签行业：'+inds.map(function(i){return '<span class="pill">'+i+'</span>';}).join(' ')+'</div>')
-                         : '<div><span style="color:#c0392b">不可集签（462）</span></div>')
-            +'<div style="margin-top:6px;">近10天岗位总数：<b>'+getCount(pc)+'</b></div>';
+  layer.on('mouseover', e=>{
+    const html = `<div style="font-weight:700;margin-bottom:4px;">${name}（邮编 ${pc}）</div>`
+      + (inds.length? `可集签行业：${inds.map(i=>`<span class="pill">${i}</span>`).join(' ')}`
+                    : `<span style="color:#c0392b">不可集签（462）</span>`)
+      + `<div style="margin-top:6px;">近10天岗位总数：<b>${getCount(pc)}</b></div>`;
     layer.bindTooltip(html,{sticky:true,opacity:.97,direction:'top',offset:[0,-6]}).openTooltip(e.latlng);
     if(inds.length) layer.setStyle({weight:1.2,fillOpacity:.85});
   });
-  layer.on('mouseout', function(){ if(inds.length) layer.setStyle({weight:.6,fillOpacity:.72}); });
+  layer.on('mouseout', ()=>{ if(inds.length) layer.setStyle({weight:.6,fillOpacity:.72}); });
 
-  layer.on('click', function(){
-    var panel=document.getElementById('jobsPanel');
-    var title=document.getElementById('jobsTitle');
-    var sub=document.getElementById('jobsSub');
-    var list=document.getElementById('jobsList');
-    var items=getItems(pc);
+  layer.on('click', ()=>{
+    const panel=document.getElementById('jobsPanel');
+    const title=document.getElementById('jobsTitle');
+    const sub=document.getElementById('jobsSub');
+    const list=document.getElementById('jobsList');
+    const items=getItems(pc);
 
-    title.textContent = name+'（邮编 '+pc+'）';
-    sub.innerHTML = (inds.length? '可集签行业：'+inds.map(function(i){return '<span class="pill">'+i+'</span>';}).join(' ')
-                    : '<span style="color:#c0392b">不可集签（462）</span>') + ' · 近10天岗位：<b>'+getCount(pc)+'</b>';
+    title.textContent = `${name}（邮编 ${pc}）`;
+    sub.innerHTML = (inds.length? `可集签行业：${inds.map(i=>`<span class="pill">${i}</span>`).join(' ')}` : `<span style="color:#c0392b">不可集签（462）</span>`)
+                   + ` · 近10天岗位：<b>${getCount(pc)}</b>`;
     list.innerHTML='';
     if(!items.length){
-      var wf='https://www.workforceaustralia.gov.au/individuals/jobs/search?searchText='+encodeURIComponent(pc);
-      list.innerHTML='<div class="note">暂无岗位清单（或尚未更新）。<br/>可先查看官方：<a class="btn" href="'+wf+'" target="_blank" rel="noopener">Workforce Australia（搜索 '+pc+'）</a></div>';
+      const wf=`https://www.workforceaustralia.gov.au/individuals/jobs/search?searchText=${encodeURIComponent(pc)}`;
+      list.innerHTML = `<div class="note">暂无岗位清单（或尚未更新）。<br/>可先查看官方：<a class="btn" href="${wf}" target="_blank" rel="noopener">Workforce Australia（搜索 ${pc}）</a></div>`;
     }else{
-      items.slice(0,120).forEach(function(it){
-        var d=document.createElement('div'); d.className='job';
-        d.innerHTML = '<a href="'+it.url+'" target="_blank" rel="noopener">'+(it.title||'职位').trim()+'</a>'
-                    + '<small>'+((it.company||'').trim())+(it.location? ' · '+it.location:'')+(it.age||'')+'</small>';
+      items.slice(0,120).forEach(it=>{
+        const d=document.createElement('div'); d.className='job';
+        d.innerHTML=`<a href="${it.url}" target="_blank" rel="noopener">${(it.title||'职位').trim()}</a>
+                     <small>${(it.company||'').trim()} ${it.location? '· '+it.location:''} ${it.age||''}</small>`;
         list.appendChild(d);
       });
     }
-    panel.style.display='block'; layer.bringToFront();
+    panel.style.display='block';
+    layer.bringToFront();
   });
 }
 
-function renderGeo(geo){
-  var canvasRenderer=L.canvas({padding:0.5});
-  var map=L.map('map',{renderer:canvasRenderer,preferCanvas:true,zoomControl:true,worldCopyJump:false,scrollWheelZoom:true});
+// 只从当前仓库依次尝试读取 poa.json
+async function loadLocalPOA(){
+  for(const url of LOCAL_SOURCES){
+    try{
+      const r = await fetch(url,{cache:'no-store'});
+      if(r.ok){
+        const j = await r.json();
+        return j;
+      }
+    }catch(e){}
+  }
+  return null;
+}
+
+async function render(geo){
+  const canvasRenderer=L.canvas({padding:0.5});
+  const map=L.map('map',{renderer:canvasRenderer,preferCanvas:true,zoomControl:true,worldCopyJump:false,scrollWheelZoom:true});
   applyViewConstraints(map);
+
   L.geoJSON(geo,{
     smoothFactor:1.0,
-    style:function(f){
-      var pc=getPOAfromAnyProps(f.properties||{});
-      var inds=industriesZH(pc);
+    style:f=>{
+      const pc=getPOAfromAnyProps(f.properties||{});
+      const inds=industriesZH(pc);
       if(!inds.length) return STYLE_INELIG;
       return blueStyle(getCount(pc));
     },
-    onEachFeature:function(f,layer){ bindPolygonUI(layer,f.properties||{}); }
+    onEachFeature:(f,layer)=> bindPolygonUI(layer, f.properties||{})
   }).addTo(map);
 }
 
-function tryLoadGeoJSON(){
-  var i=0;
-  function next(){
-    if(i>=GEOJSON_SOURCES.length){ badge('状态：加载失败（所有数据源不可用）'); return; }
-    var url=GEOJSON_SOURCES[i++]; badge('状态：加载邮编边界中… 源 '+i+'/'+GEOJSON_SOURCES.length);
-    fetchJsonWithTimeout(url,12000).then(function(geo){
-      badge('状态：已就绪 · 数据源 '+i+' · 最小缩放=60%');
-      renderGeo(geo);
-    }).catch(function(){
-      badge('状态：源 '+i+' 失败，切换下一个…'); next();
-    });
+(async function init(){
+  if(typeof L==='undefined'){ badge('状态：Leaflet 加载失败，请刷新或稍后再试'); return; }
+  await loadJobs();
+  badge('状态：查找本地数据文件…');
+  const geo = await loadLocalPOA();
+  if(!geo){
+    badge('状态：未找到 poa.json（请按面板提示上传）');
+    const help=document.getElementById('help'); if(help) help.style.display='block';
+    return;
   }
-  next();
-}
-
-(function init(){
-  // 若 Leaflet 核心没加载成功，直接提示
-  if(typeof L === 'undefined'){ badge('状态：Leaflet 库加载失败，请刷新（或稍后重试）'); return; }
-  try { loadJobs(); } catch(e){}
-  tryLoadGeoJSON();
+  badge('状态：已就绪（本地数据）· 最小缩放=60%');
+  render(geo);
 })();
 </script>
 </body>
