@@ -57,13 +57,14 @@
 <script>
 // ========== 可编辑配置 ==========
 var GEOJSON_SOURCES = [
-  // 主源：更轻的 15% 简化 POA（GitHub RAW）
+  // 优先从“自己域名”的 Pages 读取（同域，最稳）
+  window.location.origin + '/AU_Postcode_Map/POA_2021_AUST_GDA2020_15percent.json',
+  // 下面是后备源（保留着以防万一）
   'https://raw.githubusercontent.com/Offbeatmammal/AU_Postcode_Map/main/POA_2021_AUST_GDA2020_15percent.json',
-  // 备源1：同一份的 jsDelivr 镜像
   'https://cdn.jsdelivr.net/gh/Offbeatmammal/AU_Postcode_Map@main/POA_2021_AUST_GDA2020_15percent.json',
-  // 备源2：社区 POA（再次兜底）
   'https://cdn.jsdelivr.net/gh/ferocia/australia-geojsons@master/outputs/au-postcodes-Visvalingam-5.geojson'
 ];
+
 var AUS_BOUNDS = L.latLngBounds(L.latLng(-44.5,110.0), L.latLng(-9.0,155.0));
 // 五级蓝
 function blue5(n){ return n<=0?'#eaf2ff': n<=5?'#cfe1ff': n<=20?'#9fc2ff': n<=50?'#5b94ff':'#1e6bff'; }
